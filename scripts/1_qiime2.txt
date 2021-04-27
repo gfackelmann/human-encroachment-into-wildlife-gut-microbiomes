@@ -1,0 +1,155 @@
+#Copyright (c) 2021 Insitute of Evolutionary Ecology and Conservation Genomics, Ulm University, Germany. See the LICENSE file at the top-level directory of this distribution (https://github.com/gfackelmann/human-encroachment-into-wildlife-gut-microbiomes/blob/main/LICENSE). 
+#Author: Gloria Fackelmann (gloria.fackelmann@uni-ulm.de; https://www.researchgate.net/profile/Gloria-Fackelmann)
+
+source activate qiime2-2018.6
+
+qiime info
+#System versions
+# Python version: 3.5.5
+# QIIME 2 release: 2018.6
+# QIIME 2 version: 2018.6.0
+# q2cli version: 2018.6.0
+
+# Installed plugins
+# alignment: 2018.6.0
+# composition: 2018.6.0
+# cutadapt: 2018.6.0
+# dada2: 2018.6.0
+# deblur: 2018.6.0
+# demux: 2018.6.0
+# diversity: 2018.6.0
+# emperor: 2018.6.0
+# feature-classifier: 2018.6.0
+# feature-table: 2018.6.0
+# gneiss: 2018.6.0
+# longitudinal: 2018.6.0
+# metadata: 2018.6.0
+# phylogeny: 2018.6.0
+# quality-control: 2018.6.1
+# quality-filter: 2018.6.0
+# sample-classifier: 2018.6.0
+# taxa: 2018.6.0
+# types: 2018.6.0
+# vsearch: 2018.6.0
+
+#Import Data for paired-end demultiplexed fastq
+qiime tools import \
+  --type 'SampleData[PairedEndSequencesWithQuality]' \
+  --input-path casava-18-paired-end-demultiplexed \
+  --source-format CasavaOneEightSingleLanePerSampleDirFmt \
+  --output-path demux-paired-end.qza
+
+qiime demux summarize \
+  --i-data demux-paired-end.qza \
+  --o-visualization demux.qzv
+
+qiime tools view demux.qzv
+
+#dada2 for quality filtering
+#R version 3.4.1
+#Loading required package: Rcpp
+#DADA2 R package version: 1.6.0 
+qiime dada2 denoise-paired \
+  --i-demultiplexed-seqs demux-paired-end.qza \
+  --p-trim-left-f 23 \
+  --p-trim-left-r 20 \
+  --p-trunc-len-f 247 \
+  --p-trunc-len-r 247 \
+  --output-dir DenoisingStats \
+  --o-representative-sequences rep-seqs-dada2.qza \
+  --o-table table-dada2.qza \
+  --verbose
+
+#Taxonomy
+
+#Train classifier:
+#https://www.arb-silva.de/download/archive/qiime
+#release 128, V4 region, 99% similarity, 7 levels taxonomy. 
+#Primers: 515F (5′-GTGCCAGCMGCCGCGGTAA-3′) and 806R (5′-GGACTACHVGGGTWTCTAAT-3′) (Caporaso et al., 2010, 2011 and Menke et al. 2017).
+  qiime feature-classifier classify-sklearn \
+  --i-classifier silva-128-515-806-classifier.qza \
+  --i-reads rep-seqs-dada2.qza \
+  --o-classification taxonomy-silva.qza \
+  --p-reads-per-batch 1000
+
+#Remove archaea, mitochondra, chloroplast, unassigned and not assigned at the domain/kingdom level sequences from table and list of sequences.
+qiime taxa filter-table \
+  --i-table table-dada2.qza  \
+  --i-taxonomy taxonomy-silva.qza \
+  --p-exclude Archaea,mitochondria,chloroplast,Unassigned \
+  --o-filtered-table table-taxa-filtered-silva.qza
+
+qiime taxa filter-seqs \
+  --i-sequences rep-seqs-dada2.qza \
+  --i-taxonomy taxonomy-silva.qza \
+  --p-exclude Archaea,mitochondria,chloroplast,Unassigned \
+  --o-filtered-sequences rep-seqs-taxa-filtered-silva.qza
+
+#access rep seqs table to root tree:
+qiime feature-table tabulate-seqs \
+  --i-data rep-seqs-taxa-filtered-silva.qza \
+  --o-visualization rep-seqs-filtered-silva.qzv
+
+qiime tools view rep-seqs-filtered-silva.qzv
+#save as a fasta file (name as: sequences.fasta) in order to root tree.
+
+#Add the follwing sequence at the bottom of the sequences.fasta file. It will be used to root the tree later on:
+>KT433146.1 Uncultured archaeon clone denovo4500 16S ribosomal RNA gene, partial sequence
+TACGGAGGGTCCAAGCGTTATCCGGAATCATTGGGTTTAAAGGGTGCGCAGGCGGTAGTGTAAGTCAGTGGTGAAATCTCTCGGCTCAACCGAGAAACTGCCATTGATACTGCAGTACTTGAGTACAGTTGAAGTAGGCGGAATGTGTAGTGTAGCGGTGAAATGCTTAGATATTACACAGAACACCGATAGCGAAGGCAGCTTACTAAACTGATATTGACGCTCATGCACGAAAGCGTGGGGAGCGAACAGGATTAGAAACCCGTGTAGT
+
+#Align fasta file using mafft
+#FastTree Version 2.1.10 Double precision (No SSE3)
+FastTree < mafft sequences.fasta > sequences-aligned.fasta
+
+#Build tree using FastTree
+FastTree < sequences-aligned.fasta > tree.tree 
+
+#Dendroscope (version 3.5.10, built 14 Nov 2018)
+#open the tree in Dendroscope, re-root the tree and remove the taxa beloning to archea. To do this, Dendroscope must be installed. To install this program you need Java Version 1.7 or later. To install java in terminal: sudo apt-get instsall default-jre
+#Then to intall Dendroscope, download the linux version from the offical hompage and run in terminal: sh nameofdendroscopefile.sh
+#open Dendroscope in the Menu just like you would open Excel.
+#open the tree: file-->open--->tree and use default settings concerning nodes
+#Search for KT433146.1 and then click the button for "reroot tree using selected __ as node" (fourth button from the right), then go to edit-->delete taxa to remove the Archaea.
+#Export the rooted tree in Newick format.
+#save the file in Newick format. Now the tree is rooted.
+
+#Export data to be analysed in R:
+qiime tools export \
+  table-taxa-filtered-silva.qza \
+  --output-dir exported-table
+
+qiime tools export \
+  taxonomy-silva.qza \
+  --output-dir taxonomy
+
+biom convert \
+  --input-fp feature-table.biom \
+  --output-fp proechimys.txt \
+  --header-key taxonomy \
+  --to-tsv
+
+R
+
+table <- read.csv("/proechimys.txt",sep='\t',check.names=FALSE,skip=1)
+
+Taxonomy <- read.table ("/taxonomy.tsv",sep='\t', header=TRUE)
+
+table$taxonomy <- with(Taxonomy,Taxon[match(table$"#OTU ID",Taxonomy$Feature.ID)])
+
+write.table(table,"/proechimysTaxonomy.txt",row.names=FALSE,sep="\t")
+
+quit()
+
+sed -i '1s/^/# Constructed from biom file\n/' proechimysTaxonomy.txt
+sed -i -e 's/"//g' proechimysTaxonomy.txt
+
+biom convert \
+  --input-fp proechimysTaxonomy.txt \
+  --output-fp proechimysTaxonomy-silva.biom \
+  --table-type "OTU table" \
+  --process-obs-metadata taxonomy \
+  --to-json
+
+#script continues in R using the rooted tree, proechimysTaxonomy-silva.biom and the metadata file.
+
+source deactivate qiime2-2018.6
